@@ -83,6 +83,7 @@ SERVER_PID=$!
 
 cleanup() {
   kill "$SERVER_PID" 2>/dev/null || true   # server unlinks the socket on exit
+  [ -n "${OLLAMA_PID:-}" ] && kill "$OLLAMA_PID" 2>/dev/null || true
   rm -rf "$STAGE" "$SIGN_DIR" "$MASK_DIR"
 }
 trap cleanup EXIT INT TERM
@@ -90,6 +91,27 @@ trap cleanup EXIT INT TERM
 # Wait for the oracle socket to appear (fail hard if it doesn't — L1).
 for _ in $(seq 1 100); do [ -S "$SIGN_SOCK" ] && break; sleep 0.1; done
 [ -S "$SIGN_SOCK" ] || { echo "gac: signing oracle did not start; see /tmp/gac-sign-server.log" >&2; exit 1; }
+
+# --- Ensure a host ollama server is up ----------------------------------------
+# The container reaches ollama over the shared net namespace (--network makes
+# 127.0.0.1:11434 the host loopback), so we run `ollama serve` on the HOST — a
+# second server inside the container would clash on :11434 and can't use the
+# host's masked ~/.ollama. Adopt a pre-existing server; only kill one we start.
+OLLAMA_PID=""
+probe_ollama() { (exec 3<>/dev/tcp/127.0.0.1/11434) >/dev/null 2>&1; }
+if ! probe_ollama; then
+  if ollama_bin="$(command -v ollama 2>/dev/null)"; then
+    "$ollama_bin" serve >/tmp/gac-ollama.log 2>&1 &
+    OLLAMA_PID=$!
+    for _ in $(seq 1 50); do probe_ollama && break; sleep 0.2; done
+    if ! probe_ollama; then
+      echo "gac: ollama serve did not come up; see /tmp/gac-ollama.log" >&2
+      OLLAMA_PID=""
+    fi
+  else
+    echo "gac: ollama not on PATH and nothing serving on :11434; ollama calls will fail" >&2
+  fi
+fi
 
 # Pass the oracle endpoint + key to the container env (guix shell preserves env
 # without --pure, so the shim picks these up).
@@ -172,8 +194,9 @@ uid=$(id -u)
 export XDG_RUNTIME_DIR="/run/user/$uid"
 
 # Reach the host's `ollama serve` over the shared net namespace (--network makes
-# 127.0.0.1 the host loopback). Running a second `ollama serve` here would
-# conflict on :11434, so we just use the host daemon as the model server.
+# 127.0.0.1 the host loopback). gac ensures a server is up on :11434 on the host
+# (see below); running a second `ollama serve` here would clash on the port, so
+# the container is a client, not a server.
 export OLLAMA_HOST="${OLLAMA_HOST:-127.0.0.1:11434}"
 
 # Pre-claim the Guix-home on-first-login flag so a login shell (sourced via

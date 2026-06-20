@@ -40,10 +40,13 @@ Guix profiles, and produce GPG-signed git commits.
   `direnv use guix;` work natively inside (the `guix` filter passes `shell`
   through). They do not auto-load on `cd`; the agent triggers them per command.
 - **`gh` and `fj`** included for GitHub and Forgejo/Codeberg PRs, issues, API.
-- **`ollama`** included — the CLI talks to the host's `ollama serve` over the
-  shared net namespace (`OLLAMA_HOST=127.0.0.1:11434`), so `ollama run`/`list`
-  use the host's models without running a second server. `~/.ollama` (which
-  holds an ed25519 keypair) is masked.
+- **`ollama`** included — the CLI talks to a host `ollama serve` over the shared
+  net namespace (`OLLAMA_HOST=127.0.0.1:11434`), so `ollama run`/`list` use the
+  host's models. `gac` ensures a server is up on `:11434` — it adopts one already
+  running, or starts `ollama serve` on the host if none is (killed on exit). A
+  server is run on the host, not in the container: a second one would clash on
+  `:11434` and couldn't use the masked `~/.ollama`. `~/.ollama` (which holds an
+  ed25519 keypair) is masked.
 
 ## Prerequisites
 
