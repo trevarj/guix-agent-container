@@ -56,7 +56,7 @@ guix shell --container --network --nesting \
   [--share=$SSH_AUTH_SOCK]                     # only if set on host
   --share=$HOME/.claude/<state...>            # RW state subdirs/files
   --share=$HOME/.codex/<state...>             # RW state subdirs/files
-  --share=$SIGN_SOCK                          # oracle socket (only signing path)
+  --share=$SIGN_SOCK                          # private temp oracle socket
   --cwd=$HOME/Workspace \
   -- bash -c <entrypoint> _ "$@"
 ```
@@ -103,9 +103,9 @@ Why each:
   sqlite state + sidecars, …). `~/.claude`/`~/.codex` themselves stay RO (via
   the `$HOME` expose), so config (`settings.json`, `config.toml`, `auth.json`,
   `AGENTS.md`, symlinked `agents`/`skills`/`bin`/`rules`) is read-only.
-- `--share=$SIGN_SOCK` (RW) — the oracle Unix socket, the **only** signing path.
-  Deliberately NOT `S.gpg-agent`: the container must not reach the host
-  gpg-agent directly.
+- `--share=$SIGN_SOCK` (RW) — the oracle Unix socket in a private temp dir, the
+  **only** signing path. Deliberately NOT `S.gpg-agent`: the container must not
+  reach the host gpg-agent directly.
 - `--cwd=$HOME/Workspace` — start in the writable area.
 
 Entrypoint (inside the container, see `run.sh`) does:
@@ -225,9 +225,10 @@ Notes:
 
 ### `run.sh` — launcher + container entrypoint
 
-Starts the host oracle, stages RO shims + a safe `~/.ssh`, builds the mount
-table (masks, RO dotfiles, RW state, oracle socket), and runs the entrypoint that
-writes the `gpg`/`guix` wrappers. See the file for the full implementation.
+Starts the host oracle, stages RO shims + a safe `~/.ssh`, creates a private
+temp dir for the oracle socket, builds the mount table (masks, RO dotfiles, RW
+state, oracle socket), and runs the entrypoint that writes the `gpg`/`guix`
+wrappers. See the file for the full implementation.
 
 Invocation: `~/Workspace/guix-agent-container/run.sh claude` (or `codex`, or
 `bash`). Run `codex-gpg-unlock` on the host first if you'll be signing commits.

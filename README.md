@@ -70,7 +70,8 @@ starts in `~/Workspace` with the container's base tools on `PATH`
 (`git`, `gh`, `fj`, `gpg`→shim, `guix`→filter, `direnv`, `rg`, `fd`, …).
 
 `run.sh` starts a host signing server (backgrounded, killed on exit), stages RO
-shims in a host temp dir, and launches the container. Optional: if
+shims in a host temp dir, creates a private temp dir for the oracle socket, and
+launches the container. Optional: if
 `SSH_AUTH_SOCK` is set on the host, the wrapper shares it into the container so
 git push over SSH works (the staged `~/.ssh` provides `known_hosts`/`config`;
 the SSH agent provides the key — no private key file is exposed).
@@ -98,8 +99,8 @@ the SSH agent provides the key — no private key file is exposed).
 - `--expose=$STAGE=/opt/gac` (RO) holding the shim sources,
 - `--share` the RW state subdirs of `~/.claude` / `~/.codex`,
 - `--expose ~/Workspace/dotfiles` RO (config tamper-proofing),
-- `--share` the oracle socket (the only signing path — NOT the gpg-agent
-  socket),
+- `--share` the private temp oracle socket (the only signing path — NOT the
+  gpg-agent socket),
 - `--preserve=GAC_SIGN_SOCK/GAC_SIGN_KEY` so the shim reaches the oracle,
 - an entrypoint that: pre-claims the Guix-home `on-first-login` flag (so login
   shells don't start `shepherd` and crash on the RO home), resolves the real

@@ -32,7 +32,6 @@ HOME_RO="${HOME:?}"
 SBX="$HOME_RO/Workspace/guix-agent-container"
 WORKSPACE_RW="$HOME_RO/Workspace"
 SIGN_KEY="${GAC_SIGN_KEY:-A52D68794EBED758}"
-SIGN_SOCK="/run/user/$(id -u)/gac-sign.sock"
 MASK_DIR="$SBX/empty"
 
 mkdir -p "$MASK_DIR"
@@ -42,6 +41,10 @@ mkdir -p "$MASK_DIR"
 # means the agent cannot tamper with the shim it executes (the RW source under
 # ~/Workspace is not the inode the RO bind serves once staged + bound).
 STAGE="$(mktemp -d "${TMPDIR:-/tmp}/gac-stage.XXXXXX")"
+# Keep the oracle socket in a private temp dir. Some managed shells expose
+# /run/user/<uid> read-only, while this exact socket is bind-shared below.
+SIGN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/gac-sign.XXXXXX")"
+SIGN_SOCK="$SIGN_DIR/sign.sock"
 cp "$SBX/bin/gpg-shim.py"    "$STAGE/gpg-shim.py"
 cp "$SBX/bin/guix-filter.py" "$STAGE/guix-filter.py"
 chmod 0755 "$STAGE/gpg-shim.py" "$STAGE/guix-filter.py"
@@ -67,7 +70,7 @@ SERVER_PID=$!
 
 cleanup() {
   kill "$SERVER_PID" 2>/dev/null || true   # server unlinks the socket on exit
-  rm -rf "$STAGE"
+  rm -rf "$STAGE" "$SIGN_DIR"
 }
 trap cleanup EXIT INT TERM
 
