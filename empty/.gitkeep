@@ -1,0 +1,2 @@
+# Keeps empty/ in git so the bind-mount source for masking
+# ~/.gnupg/private-keys-v1.d exists after a fresh clone.
