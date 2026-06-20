@@ -9,7 +9,8 @@
   "bash"         ;; shell for the entrypoint + agent subprocesses
   "util-linux"   ;; mount, findmnt, lsblk (handy for the agent + debugging)
   "git"
-  "gnupg"         ;; gpg for signed commits (via host agent socket)
+  "gnupg"         ;; real gpg for --verify/--list passthrough (no agent in container)
+  "python"        ;; runtime for the gpg + guix shims (bin/gpg-shim.py, guix-filter.py)
   "openssh"       ;; ssh client for git push
   "github-cli"    ;; `gh` — GitHub PRs/issues/API (AGENTS.md: GitHub remote)
   "forgejo-cli"   ;; `fj` — Forgejo/Codeberg PRs/issues/API (AGENTS.md: Codeberg remote)
