@@ -15,8 +15,9 @@ Guix profiles, and produce GPG-signed git commits.
   `known_hosts`, `config`, `*.pub`, `authorized_keys` — no private keys),
   `~/.gnupg/private-keys-v1.d`, `~/.password-store`, `~/.aws`,
   `~/.local/share/keyring`, `~/.config/BraveSoftware`, `~/.config/chromium`,
-  `~/.config/github-copilot`, `~/.lnd`, `~/wireguard` are shadowed by an empty
-  dir. Private key material never enters the container.
+  `~/.config/github-copilot`, `~/.lnd`, `~/wireguard`, `~/.ollama` (holds an
+  ed25519 keypair) are shadowed by an empty dir. Private key material never
+  enters the container.
 - **Agent config read-only, state read-write** — `~/Workspace/dotfiles` is
   exposed RO (all symlinked `~/.claude`/`~/.codex` config lives there:
   `settings.json`, `CLAUDE.md`, `AGENTS.md`, `agents`, `skills`, `bin`,
@@ -39,6 +40,10 @@ Guix profiles, and produce GPG-signed git commits.
   `direnv use guix;` work natively inside (the `guix` filter passes `shell`
   through). They do not auto-load on `cd`; the agent triggers them per command.
 - **`gh` and `fj`** included for GitHub and Forgejo/Codeberg PRs, issues, API.
+- **`ollama`** included — the CLI talks to the host's `ollama serve` over the
+  shared net namespace (`OLLAMA_HOST=127.0.0.1:11434`), so `ollama run`/`list`
+  use the host's models without running a second server. `~/.ollama` (which
+  holds an ed25519 keypair) is masked.
 
 ## Prerequisites
 

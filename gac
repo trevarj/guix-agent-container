@@ -112,7 +112,7 @@ args=(
 for p in \
   ".gnupg/private-keys-v1.d" ".password-store" ".aws" \
   ".local/share/keyring" ".config/BraveSoftware" ".config/chromium" \
-  ".config/github-copilot" ".lnd" "wireguard"; do
+  ".config/github-copilot" ".lnd" "wireguard" ".ollama"; do
   if [ -d "$HOME_RO/$p" ]; then args+=(--expose="$MASK_DIR=$HOME_RO/$p"); fi
 done
 
@@ -170,6 +170,11 @@ entrypoint=$(cat <<'EOSH'
 set -euo pipefail
 uid=$(id -u)
 export XDG_RUNTIME_DIR="/run/user/$uid"
+
+# Reach the host's `ollama serve` over the shared net namespace (--network makes
+# 127.0.0.1 the host loopback). Running a second `ollama serve` here would
+# conflict on :11434, so we just use the host daemon as the model server.
+export OLLAMA_HOST="${OLLAMA_HOST:-127.0.0.1:11434}"
 
 # Pre-claim the Guix-home on-first-login flag so a login shell (sourced via
 # ~/.profile) does NOT start shepherd here — it would crash chmod-ing

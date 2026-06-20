@@ -1,11 +1,12 @@
 ;; Container base profile for the LLM-agent sandbox.
-;; Built from the current host channels; `claude-code` and `codex` resolve
-;; from the `trevarj` channel (trev-guix/packages/ai.scm).
+;; Built from the current host channels; `claude-code`, `codex`, and `ollama`
+;; resolve from the `trevarj` channel (trev-guix/packages/ai.scm).
 ;; `guix` itself is added automatically by `--nesting` (-W), so not listed.
 (specifications->manifest
  (list
   "claude-code"   ;; LLM agent (trevarj channel)
   "codex"         ;; LLM agent (trevarj channel; depends on bubblewrap)
+  "ollama"        ;; local LLM CLI (trevarj channel); talks to the host `ollama serve`
   "bash"         ;; shell for the entrypoint + agent subprocesses
   "util-linux"   ;; mount, findmnt, lsblk (handy for the agent + debugging)
   "git"

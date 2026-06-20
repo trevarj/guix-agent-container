@@ -83,10 +83,11 @@ Why each:
 - `--expose=$MASK_DIR=$HOME/<secret>` — masks `~/.gnupg/private-keys-v1.d`,
   `~/.password-store`, `~/.aws`, `~/.local/share/keyring`,
   `~/.config/BraveSoftware`, `~/.config/chromium`, `~/.config/github-copilot`,
-  `~/.lnd`, `~/wireguard` with an empty dir (conditional on the path being a
-  dir). Guix bind-mounts in order; the later, more-specific mount shadows the
-  real dir. **Verified**: masked `private-keys-v1.d` is empty (real holds key
-  files); `~/.ssh` shows only `known_hosts`/`config`/`*.pub`.
+  `~/.lnd`, `~/wireguard`, `~/.ollama` (ed25519 keypair) with an empty dir
+  (conditional on the path being a dir). Guix bind-mounts in order; the later,
+  more-specific mount shadows the real dir. **Verified**: masked
+  `private-keys-v1.d` is empty (real holds key files); `~/.ssh` shows only
+  `known_hosts`/`config`/`*.pub`.
 - `--expose=$STAGE/ssh=$HOME/.ssh` (RO) — a host-staged copy of `~/.ssh`
   containing only `known_hosts`, `config`, `*.pub`, `authorized_keys` (no
   `id_ed25519`/`id_rsa`/`wgkey`). `git push` over SSH works via the SSH agent +
