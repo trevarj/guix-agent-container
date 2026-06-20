@@ -86,6 +86,7 @@ export GAC_SIGN_SOCK="$SIGN_SOCK" GAC_SIGN_KEY="$SIGN_KEY"
 args=(
   --container --network --nesting
   --preserve=GAC_SIGN_SOCK --preserve=GAC_SIGN_KEY     # oracle endpoint -> container env
+  --preserve=TERM --preserve=COLORTERM --preserve=TERM_PROGRAM  # carry host terminal (color + TUI)
   --manifest="$SBX/manifest.scm"
   --expose="$HOME_RO"                                  # $HOME RO (base)
   --expose="$STAGE=/opt/gac"                           # RO shim sources (gpg-shim, guix-filter)
