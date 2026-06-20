@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Launch an LLM coding agent (claude / codex) in an isolated Guix container.
+# gac — launch an LLM coding agent (claude / codex) in an isolated Guix container.
 #
 # Security posture (see PLAN.md for the full rationale + verification):
 #   - networking on (--network: outbound HTTPS + DNS, auto-carries resolv.conf)
@@ -23,18 +23,31 @@
 #     build/gc/archive/copy/time-machine/pull/...).
 #   - --nesting so per-project manifest.scm / direnv use guix work inside.
 #
-# Usage:  run.sh claude | codex | bash [args...]
+# Usage:  gac claude | codex | bash [args...]
 # Sign commits?  Run `/home/trev/.codex/bin/codex-gpg-unlock` on the host first so
 # the host gpg-agent has the signing key cached (never type passphrases in chat).
 set -euo pipefail
 
+# --- Locate runtime files (bin/ + manifest.scm) -------------------------------
+# Resolve the real directory holding this script, following profile/store
+# symlinks via `cd -P`. Works for both:
+#   - dev checkout:  script at repo root, helpers in ./bin, ./manifest.scm
+#   - Guix install:  script at <store>/bin/gac, helpers at <store>/share/gac/bin,
+#                    manifest at <store>/share/gac/manifest.scm
+self_dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$self_dir/manifest.scm" ]; then
+  SBX="$self_dir"                              # dev checkout (repo root)
+elif [ -f "$self_dir/../share/gac/manifest.scm" ]; then
+  SBX="$(cd "$self_dir/../share/gac" && pwd)"  # Guix-installed
+else
+  echo "gac: cannot locate runtime files (bin/ + manifest.scm) near $self_dir" >&2
+  exit 1
+fi
+
 HOME_RO="${HOME:?}"
-SBX="$HOME_RO/Workspace/guix-agent-container"
 WORKSPACE_RW="$HOME_RO/Workspace"
 SIGN_KEY="${GAC_SIGN_KEY:-A52D68794EBED758}"
-MASK_DIR="$SBX/empty"
-
-mkdir -p "$MASK_DIR"
+MASK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/gac-mask.XXXXXX")"
 
 # --- Stage the RO shims on the HOST (outside any container-shared path) -------
 # Copying to a host temp dir the container only ever sees via a RO bind mount
@@ -70,13 +83,13 @@ SERVER_PID=$!
 
 cleanup() {
   kill "$SERVER_PID" 2>/dev/null || true   # server unlinks the socket on exit
-  rm -rf "$STAGE" "$SIGN_DIR"
+  rm -rf "$STAGE" "$SIGN_DIR" "$MASK_DIR"
 }
 trap cleanup EXIT INT TERM
 
 # Wait for the oracle socket to appear (fail hard if it doesn't — L1).
 for _ in $(seq 1 100); do [ -S "$SIGN_SOCK" ] && break; sleep 0.1; done
-[ -S "$SIGN_SOCK" ] || { echo "run.sh: signing oracle did not start; see /tmp/gac-sign-server.log" >&2; exit 1; }
+[ -S "$SIGN_SOCK" ] || { echo "gac: signing oracle did not start; see /tmp/gac-sign-server.log" >&2; exit 1; }
 
 # Pass the oracle endpoint + key to the container env (guix shell preserves env
 # without --pure, so the shim picks these up).
@@ -93,22 +106,24 @@ args=(
 )
 
 # Mask secret DIRS under RO $HOME with an empty dir (conditional on existence).
-# .ssh is handled separately below via the staged safe-.ssh bind.
+# .ssh is handled separately below via the staged safe-.ssh bind. Use `if`
+# (not `cond && args+=()`) so a missing last item doesn't make the loop return
+# non-zero and trip `set -e`.
 for p in \
   ".gnupg/private-keys-v1.d" ".password-store" ".aws" \
   ".local/share/keyring" ".config/BraveSoftware" ".config/chromium" \
   ".config/github-copilot" ".lnd" "wireguard"; do
-  [ -d "$HOME_RO/$p" ] && args+=(--expose="$MASK_DIR=$HOME_RO/$p")
+  if [ -d "$HOME_RO/$p" ]; then args+=(--expose="$MASK_DIR=$HOME_RO/$p"); fi
 done
 
 # Safe ~/.ssh (staged above) RO over the real one: no private keys, but
 # known_hosts/config/*.pub present so ssh push via the SSH agent works.
-[ -d "$STAGE/ssh" ] && args+=(--expose="$STAGE/ssh=$HOME_RO/.ssh")
+if [ -d "$STAGE/ssh" ]; then args+=(--expose="$STAGE/ssh=$HOME_RO/.ssh"); fi
 
 # ~/Workspace RW (projects), then dotfiles RO over it (protects all symlinked
 # agent config: settings.json, CLAUDE.md, AGENTS.md, agents, skills, bin, rules).
 args+=(--share="$WORKSPACE_RW")
-[ -e "$WORKSPACE_RW/dotfiles" ] && args+=(--expose="$WORKSPACE_RW/dotfiles=$WORKSPACE_RW/dotfiles")
+if [ -e "$WORKSPACE_RW/dotfiles" ]; then args+=(--expose="$WORKSPACE_RW/dotfiles=$WORKSPACE_RW/dotfiles"); fi
 
 # Optional SSH agent for git push over SSH (only if the host exposes one).
 if [ -n "${SSH_AUTH_SOCK:-}" ] && [ -e "${SSH_AUTH_SOCK}" ]; then
@@ -116,8 +131,16 @@ if [ -n "${SSH_AUTH_SOCK:-}" ] && [ -e "${SSH_AUTH_SOCK}" ]; then
 fi
 
 # --- Agent state: RO config + RW state only (H1/H2) ---------------------------
-# Helper: share each existing path RW.
-share_rw() { for p in "$@"; do [ -e "$1/$p" ] && args+=(--share="$1/$p"); done; }
+# Helper: share each existing path RW. Shift the base dir off $@ so the loop
+# doesn't test it as a child, and `return 0` so a missing last item (e.g. a
+# transient sqlite WAL) can't make the function return non-zero under `set -e`.
+share_rw() {
+  local base="$1"; shift
+  for p in "$@"; do
+    if [ -e "$base/$p" ]; then args+=(--share="$base/$p"); fi
+  done
+  return 0
+}
 
 # ~/.claude: RO via $HOME expose; share only state dirs/files RW. The symlinked
 # config (settings.json, CLAUDE.md, AGENTS.md, agents, skills) resolves to RO
@@ -128,7 +151,7 @@ share_rw "$HOME_RO/.claude" \
   .last-cleanup daemon.lock daemon.log daemon.status.json history.jsonl stats-cache.json
 
 # ~/.codex: RO via $HOME expose (config.toml, auth.json, AGENTS.md, agents, bin,
-# rules, .git stay RO); share only state RW.
+# rules, .git go RO); share only state RW.
 share_rw "$HOME_RO/.codex" \
   .agents .codex .tmp attachments cache generated_images log memories plugins \
   sessions shell_snapshots skills tmp \

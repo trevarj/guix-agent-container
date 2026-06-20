@@ -60,16 +60,20 @@ Guix profiles, and produce GPG-signed git commits.
 ## Usage
 
 ```sh
-~/Workspace/guix-agent-container/run.sh claude   # launch Claude Code
-~/Workspace/guix-agent-container/run.sh codex    # launch Codex
-~/Workspace/guix-agent-container/run.sh bash     # drop into a shell to inspect
+~/Workspace/guix-agent-container/gac claude   # launch Claude Code
+~/Workspace/guix-agent-container/gac codex    # launch Codex
+~/Workspace/guix-agent-container/gac bash     # drop into a shell to inspect
 ```
+
+Installed via the `trevarj` Guix channel (package `gac`), the launcher is on
+`PATH`, so `gac claude` / `gac codex` / `gac bash` work from anywhere. Run from a
+checkout with the full path as above.
 
 The first launch builds the container profile (cached afterward). The agent
 starts in `~/Workspace` with the container's base tools on `PATH`
 (`git`, `gh`, `fj`, `gpg`→shim, `guix`→filter, `direnv`, `rg`, `fd`, …).
 
-`run.sh` starts a host signing server (backgrounded, killed on exit), stages RO
+`gac` starts a host signing server (backgrounded, killed on exit), stages RO
 shims in a host temp dir, creates a private temp dir for the oracle socket, and
 launches the container. Optional: if
 `SSH_AUTH_SOCK` is set on the host, the wrapper shares it into the container so
@@ -78,7 +82,7 @@ the SSH agent provides the key — no private key file is exposed).
 
 ## Files
 
-- `run.sh` — launcher + in-container entrypoint (the thing you run).
+- `gac` — launcher + in-container entrypoint (the thing you run).
 - `manifest.scm` — container base profile (agents + tools, incl. `python` for
   the shims).
 - `bin/sign-server.py` — host-side commit-only signing oracle (runs on host).
@@ -86,8 +90,8 @@ the SSH agent provides the key — no private key file is exposed).
   refuses private-key/secret ops, passes verify/list/version to real gpg.
 - `bin/guix-filter.py` — container `guix`: whitelists shell/search/show/
   describe/edit.
-- `empty/` — empty dir bind-mounted over masked secret dirs. Kept in git via
-  `empty/.gitkeep`; `run.sh` recreates it if missing.
+- Mask dirs are host temp dirs created at launch (bind-mounted RO over masked
+  secret paths); nothing needs to be tracked for them.
 - `PLAN.md` — full design rationale and verification record.
 
 ## How it works (short version)
@@ -102,6 +106,8 @@ the SSH agent provides the key — no private key file is exposed).
 - `--share` the private temp oracle socket (the only signing path — NOT the
   gpg-agent socket),
 - `--preserve=GAC_SIGN_SOCK/GAC_SIGN_KEY` so the shim reaches the oracle,
+  `--preserve=TERM/COLORTERM/TERM_PROGRAM` so color + the agent TUIs work
+  (`--container` otherwise resets `TERM=dumb`),
 - an entrypoint that: pre-claims the Guix-home `on-first-login` flag (so login
   shells don't start `shepherd` and crash on the RO home), resolves the real
   `gpg`/`guix`/`python3`/`bash` and writes `gpg`/`guix` wrappers (absolute
@@ -140,17 +146,17 @@ lines. The container `gpg` shim emits them where git expects (`--status-fd`).
 
 ```sh
 G=~/Workspace/guix-agent-container
-$G/run.sh bash -c 'test -w ~/Workspace && echo W_OK; test -w ~/.bashrc && echo BAD_HOME_RW;
+$G/gac bash -c 'test -w ~/Workspace && echo W_OK; test -w ~/.bashrc && echo BAD_HOME_RW;
   ls -A ~/.ssh; [ -z "$(ls -A ~/.gnupg/private-keys-v1.d/)" ] && echo KEYS_MASKED'
-$G/run.sh bash -c 'echo x >> ~/.claude/settings.json 2>/dev/null && echo BAD || echo CFG_RO;
+$G/gac bash -c 'echo x >> ~/.claude/settings.json 2>/dev/null && echo BAD || echo CFG_RO;
   ( touch ~/.claude/sessions/.t && rm -f ~/.claude/sessions/.t ) && echo STATE_RW'
-$G/run.sh bash -c 'gh api user --jq .login'                       # -> trevarj
-$G/run.sh bash -c 'cd ~/Workspace/gubar && fj repo view -R origin' # Codeberg repo
-$G/run.sh bash -c 'cd ~/Workspace/this-week-in-guix && guix shell -m manifest.scm -- python3 --version'
-$G/run.sh bash -c 'guix build hello 2>&1 | head -1'              # -> blocked
-$G/run.sh bash -c 'echo hi | gpg --decrypt 2>&1 | head -1'       # -> refused
+$G/gac bash -c 'gh api user --jq .login'                       # -> trevarj
+$G/gac bash -c 'cd ~/Workspace/gubar && fj repo view -R origin' # Codeberg repo
+$G/gac bash -c 'cd ~/Workspace/this-week-in-guix && guix shell -m manifest.scm -- python3 --version'
+$G/gac bash -c 'guix build hello 2>&1 | head -1'              # -> blocked
+$G/gac bash -c 'echo hi | gpg --decrypt 2>&1 | head -1'       # -> refused
 # signed commit via the oracle (run codex-gpg-unlock on the host first):
-$G/run.sh bash -c 'T=$(mktemp -d ~/Workspace/.st-XXXX); cd $T; git init -q;
+$G/gac bash -c 'T=$(mktemp -d ~/Workspace/.st-XXXX); cd $T; git init -q;
   git config user.name t; git config user.email t@t; git config gpg.program gpg;
   echo x>f; git add f; git commit -q -S -m sigtest; git verify-commit HEAD | rg Good;
   rm -rf $T'

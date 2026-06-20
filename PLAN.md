@@ -108,7 +108,7 @@ Why each:
   reach the host gpg-agent directly.
 - `--cwd=$HOME/Workspace` — start in the writable area.
 
-Entrypoint (inside the container, see `run.sh`) does:
+Entrypoint (inside the container, see `gac`) does:
 - Sets `XDG_RUNTIME_DIR=/run/user/<uid>` and **pre-claims the
   `on-first-login-executed` flag** so the host Guix-home `on-first-login` (sourced
   by login shells via `~/.profile`) does not start `shepherd` inside the
@@ -144,7 +144,7 @@ sign actual git commit/tag objects (not arbitrary data, not with a different
 key, and never decrypt). Implemented as three parts:
 
 - **`bin/sign-server.py`** (host) — a Python Unix-socket daemon, started by
-  `run.sh` via `guix shell python gnupg -- python3 …` (host python3 + gpg pulled
+  `gac` via `guix shell python gnupg -- python3 …` (host python3 + gpg pulled
   in ad hoc; no global install). Policy:
   - Signs ONLY with the configured `SIGNING_KEY`, regardless of the client's
     requested key id. **Verified**: a direct socket request with key
@@ -219,18 +219,21 @@ Notes:
 - `gpg-shim.py` — container `gpg` (oracle routing + refuse private-key ops).
 - `guix-filter.py` — container `guix` (whitelist read-only + shell subcommands).
 
-### `empty/` — empty dir used to mask secret dirs
+### Mask dirs — temp dirs used to mask secret dirs
 
-`mkdir -p ~/Workspace/guix-agent-container/empty` (leave empty; `.gitkeep` tracked).
+`gac` creates a host temp dir at launch and bind-mounts it (RO) over each masked
+secret path; nothing needs to be tracked for this.
 
-### `run.sh` — launcher + container entrypoint
+### `gac` — launcher + container entrypoint
 
-Starts the host oracle, stages RO shims + a safe `~/.ssh`, creates a private
-temp dir for the oracle socket, builds the mount table (masks, RO dotfiles, RW
-state, oracle socket), and runs the entrypoint that writes the `gpg`/`guix`
-wrappers. See the file for the full implementation.
+Starts the host oracle, stages RO shims + a safe `~/.ssh`, creates private temp
+dirs for the oracle socket and the mask mounts, builds the mount table (masks,
+RO dotfiles, RW state, oracle socket), and runs the entrypoint that writes the
+`gpg`/`guix` wrappers. Resolves its own `bin/` + `manifest.scm` relative to the
+script, so it works from a checkout or a Guix install. See the file for the
+full implementation.
 
-Invocation: `~/Workspace/guix-agent-container/run.sh claude` (or `codex`, or
+Invocation: `~/Workspace/guix-agent-container/gac claude` (or `codex`, or
 `bash`). Run `codex-gpg-unlock` on the host first if you'll be signing commits.
 
 ## Nested sandbox inside `codex` / `claude-code` — verified OK
@@ -248,7 +251,7 @@ S=~/Workspace/guix-agent-container
 /home/trev/.codex/bin/codex-gpg-unlock        # unlock host agent key once
 
 # mounts / masks / config RO / state RW
-$S/run.sh bash -c 'test -w ~/Workspace && echo W_OK; test -w ~/.bashrc && echo BAD_HOME_RW
+$S/gac bash -c 'test -w ~/Workspace && echo W_OK; test -w ~/.bashrc && echo BAD_HOME_RW
   || echo HOME_RO_OK; ls -A ~/.ssh
   [ -z "$(ls -A ~/.gnupg/private-keys-v1.d/)" ] && echo KEYS_MASKED
   ( echo x >> ~/.claude/settings.json ) 2>/dev/null && echo BAD_CFG_RW || echo CFG_RO
@@ -257,22 +260,22 @@ $S/run.sh bash -c 'test -w ~/Workspace && echo W_OK; test -w ~/.bashrc && echo B
   ( touch ~/.codex/sessions/.t && rm -f ~/.codex/sessions/.t ) && echo CODEX_STATE_RW'
 
 # network + per-project manifest (core question) — guix filter passes shell
-$S/run.sh bash -c 'cd ~/Workspace/this-week-in-guix && guix shell -m manifest.scm -- python3 --version'
+$S/gac bash -c 'cd ~/Workspace/this-week-in-guix && guix shell -m manifest.scm -- python3 --version'
 # gh + fj read auth from RO home and hit their APIs over HTTPS
-$S/run.sh bash -c 'gh api user --jq .login'                       # -> trevarj
-$S/run.sh bash -c 'cd ~/Workspace/gubar && fj repo view -R origin' # -> trevarj/gubar
+$S/gac bash -c 'gh api user --jq .login'                       # -> trevarj
+$S/gac bash -c 'cd ~/Workspace/gubar && fj repo view -R origin' # -> trevarj/gubar
 # nested bwrap (agent inner sandbox) works
-$S/run.sh bash -c 'bwrap --unshare-user --unshare-pid --ro-bind / / --dev /dev --proc /proc true && echo BWRAP_OK'
+$S/gac bash -c 'bwrap --unshare-user --unshare-pid --ro-bind / / --dev /dev --proc /proc true && echo BWRAP_OK'
 # guix filter blocks store-mutating/exfil ops
-$S/run.sh bash -c 'guix build hello 2>&1 | head -1; guix gc 2>&1 | head -1; guix time-machine 2>&1 | head -1'
+$S/gac bash -c 'guix build hello 2>&1 | head -1; guix gc 2>&1 | head -1; guix time-machine 2>&1 | head -1'
 
 # signing oracle: signed commit, real gpg blocked, policy enforced
-$S/run.sh bash -c 'T=$(mktemp -d ~/Workspace/.st-XXXX); cd $T; git init -q
+$S/gac bash -c 'T=$(mktemp -d ~/Workspace/.st-XXXX); cd $T; git init -q
   git config user.name t; git config user.email t@t; git config gpg.program gpg
   echo x>f; git add f; git commit -q -S -m sigtest; git verify-commit HEAD | rg Good; rm -rf $T'
-$S/run.sh bash -c 'echo hi | gpg --decrypt 2>&1 | head -1'        # -> refused
-$S/run.sh bash -c 'echo hi | gpg --clearsign 2>&1 | head -1'      # -> refused
-$S/run.sh bash -c '"$GAC_REAL_GPG" --batch --detach-sign -u A52D68794EBED758 </dev/null 2>&1 | tail -1' # No agent running
+$S/gac bash -c 'echo hi | gpg --decrypt 2>&1 | head -1'        # -> refused
+$S/gac bash -c 'echo hi | gpg --clearsign 2>&1 | head -1'      # -> refused
+$S/gac bash -c '"$GAC_REAL_GPG" --batch --detach-sign -u A52D68794EBED758 </dev/null 2>&1 | tail -1' # No agent running
 ```
 
 ## Out of scope / future
