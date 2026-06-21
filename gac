@@ -74,17 +74,24 @@ case "${1:-}" in
       _i=$((_i+1))
     done
     unset _args _i
-    # Declare the --model as a custom model so claude's INTERACTIVE startup
-    # validation accepts it. Claude Code validates --model against known Anthropic
-    # model names in the TUI (print mode and child sessions skip it); an ollama
-    # model id like "glm-5.2:cloud" fails that check with "model may not exist"
-    # even when ollama can serve it. ANTHROPIC_CUSTOM_MODEL_OPTION is the
-    # documented bypass: claude skips validation for the id set here. Export on
-    # the host so --preserve=^ANTHROPIC_ carries it into the container.
-    if [ -n "$LAUNCH_MODEL" ]; then
-      export ANTHROPIC_CUSTOM_MODEL_OPTION="$LAUNCH_MODEL"
-      export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="ollama ${LAUNCH_MODEL}"
-    fi
+    # `ollama launch` is an explicit opt-in to ollama routing, so FORCE the
+    # ollama/claude-code manual-setup env
+    # (https://docs.ollama.com/integrations/claude-code#manual-setup):
+    #   ANTHROPIC_AUTH_TOKEN=ollama
+    #   ANTHROPIC_API_KEY=""        (explicitly empty)
+    #   ANTHROPIC_BASE_URL=http://127.0.0.1:11434
+    # Override whatever the caller's shell has: a shell configured for the real
+    # Anthropic API (non-empty ANTHROPIC_API_KEY, no/other BASE_URL) would be
+    # preserved into the container by --preserve=^ANTHROPIC_ below and make
+    # claude validate --model against api.anthropic.com ("model may not exist or
+    # you may not have access"). An empty ANTHROPIC_API_KEY also suppresses
+    # claude's "Detected a custom API key in your environment" prompt. Export on
+    # the host so --preserve=^ANTHROPIC_ carries THESE (not the shell's) in.
+    # `claude --model <ollama-name>` then works with just these three vars; no
+    # ANTHROPIC_CUSTOM_MODEL_OPTION bypass is needed (verified on 2.1.170 + 2.1.183).
+    export ANTHROPIC_AUTH_TOKEN="ollama"
+    export ANTHROPIC_API_KEY=""
+    export ANTHROPIC_BASE_URL="http://127.0.0.1:11434"
     ;;
   claude|codex|bash) : ;;
   "")        echo "Usage: gac claude | codex | bash [args...]" >&2
