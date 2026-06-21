@@ -44,19 +44,32 @@ else
   exit 1
 fi
 
-# --- Validate the subcommand --------------------------------------------------
-# gac's CLI is exactly: claude | codex | bash [args...]. The first arg is the
-# command exec'd inside the container — anything else (e.g. `ollama launch ...`)
-# would be run in the container and fail confusingly against the RO-masked
-# ~/.ollama. ollama is auto-managed on the host (see below), never a subcommand.
+# --- Validate + normalize the subcommand --------------------------------------
+# gac's CLI: claude | codex | bash [args...], plus the convenience form
+# `gac ollama launch <agent> [args...]` — ensures the host ollama server is up
+# (gac does this for every launch anyway) and then runs <agent>. Strip the
+# `ollama launch` prefix so the rest of the script treats it as `gac <agent>`.
 case "${1:-}" in
+  ollama)
+    if [ "${2:-}" != "launch" ]; then
+      echo "gac: 'ollama' takes 'launch <agent>'; usage: gac ollama launch claude|codex|bash [args...]" >&2
+      exit 2
+    fi
+    case "${3:-}" in
+      claude|codex|bash) shift 2 ;;   # drop 'ollama launch'; keep <agent> + its args
+      "") echo "gac: 'ollama launch' needs an agent: claude|codex|bash" >&2; exit 2 ;;
+      *)  echo "gac: unknown agent '$3' for 'ollama launch' (use claude|codex|bash)" >&2; exit 2 ;;
+    esac
+    ;;
   claude|codex|bash) : ;;
-  "")        echo "Usage: gac claude | codex | bash [args...]" >&2; exit 1 ;;
-  -h|--help) echo "Usage: gac claude | codex | bash [args...]"; exit 0 ;;
+  "")        echo "Usage: gac claude | codex | bash [args...]" >&2
+              echo "       gac ollama launch claude|codex|bash [args...]" >&2; exit 1 ;;
+  -h|--help) echo "Usage: gac claude | codex | bash [args...]"
+              echo "       gac ollama launch claude|codex|bash [args...]"; exit 0 ;;
   *)
     echo "gac: unknown subcommand '$1'" >&2
     echo "Usage: gac claude | codex | bash [args...]" >&2
-    echo "  (ollama is auto-managed on the host at 127.0.0.1:11434; not a subcommand)" >&2
+    echo "       gac ollama launch claude|codex|bash [args...]" >&2
     exit 2
     ;;
 esac
