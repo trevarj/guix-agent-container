@@ -74,6 +74,17 @@ case "${1:-}" in
       _i=$((_i+1))
     done
     unset _args _i
+    # Declare the --model as a custom model so claude's INTERACTIVE startup
+    # validation accepts it. Claude Code validates --model against known Anthropic
+    # model names in the TUI (print mode and child sessions skip it); an ollama
+    # model id like "glm-5.2:cloud" fails that check with "model may not exist"
+    # even when ollama can serve it. ANTHROPIC_CUSTOM_MODEL_OPTION is the
+    # documented bypass: claude skips validation for the id set here. Export on
+    # the host so --preserve=^ANTHROPIC_ carries it into the container.
+    if [ -n "$LAUNCH_MODEL" ]; then
+      export ANTHROPIC_CUSTOM_MODEL_OPTION="$LAUNCH_MODEL"
+      export ANTHROPIC_CUSTOM_MODEL_OPTION_NAME="ollama ${LAUNCH_MODEL}"
+    fi
     ;;
   claude|codex|bash) : ;;
   "")        echo "Usage: gac claude | codex | bash [args...]" >&2
