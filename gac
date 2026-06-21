@@ -60,6 +60,20 @@ case "${1:-}" in
       "") echo "gac: 'ollama launch' needs an agent: claude|codex|bash" >&2; exit 2 ;;
       *)  echo "gac: unknown agent '$3' for 'ollama launch' (use claude|codex|bash)" >&2; exit 2 ;;
     esac
+    # Remember the --model so the ensure step below can register it with ollama.
+    # (Cloud models are servable on demand but absent from /v1/models until their
+    # manifest is pulled, which makes claude's interactive model check reject.)
+    LAUNCH_MODEL=""
+    _args=("$@")
+    _i=0
+    while [ "$_i" -lt ${#_args[@]} ]; do
+      case "${_args[$_i]}" in
+        --model) [ "$((_i+1))" -lt ${#_args[@]} ] && LAUNCH_MODEL="${_args[$((_i+1))]}"; break ;;
+        --model=*) LAUNCH_MODEL="${_args[$_i]#--model=}"; break ;;
+      esac
+      _i=$((_i+1))
+    done
+    unset _args _i
     ;;
   claude|codex|bash) : ;;
   "")        echo "Usage: gac claude | codex | bash [args...]" >&2
@@ -133,6 +147,7 @@ OLLAMA_PID=""
 # redirections to probe. curl is the fast path; fall back to a python one-liner
 # via a guix shell when it's absent.
 curl_bin="$(command -v curl 2>/dev/null || true)"
+ollama_bin="$(command -v ollama 2>/dev/null || true)"
 
 # True when an ollama HTTP API is actually serving — not just a listening socket
 # (a bare TCP accept happens before the HTTP layer is ready, and any process can
@@ -159,7 +174,7 @@ if ! probe_ollama; then
   for _ in $(seq 1 5); do probe_ollama && break; sleep 0.2; done
 fi
 if ! probe_ollama; then
-  if ollama_bin="$(command -v ollama 2>/dev/null)"; then
+  if [ -n "$ollama_bin" ]; then
     "$ollama_bin" serve >/tmp/gac-ollama.log 2>&1 &
     OLLAMA_PID=$!
     for _ in $(seq 1 50); do probe_ollama && break; sleep 0.2; done
@@ -170,6 +185,21 @@ fi
 if ! probe_ollama; then
   echo "gac: ollama serve did not come up; see /tmp/gac-ollama.log" >&2
   OLLAMA_PID=""
+fi
+
+# For `ollama launch`: ensure the requested --model is registered locally. A
+# cloud model is servable on demand but absent from /v1/models until its manifest
+# is pulled, and claude's interactive startup validates --model against that list
+# (print mode doesn't), rejecting it with "model may not exist". `ollama pull` of
+# a cloud model fetches only the manifest (~bytes); for a local model it ensures
+# the weights are present. Skip when already listed so repeat launches are free.
+if [ -n "${LAUNCH_MODEL:-}" ] && [ -n "$ollama_bin" ] && probe_ollama; then
+  if ! "$ollama_bin" list 2>/dev/null | awk 'NR>1{print $1}' | grep -qx -- "$LAUNCH_MODEL"; then
+    echo "gac: ensuring ollama model '$LAUNCH_MODEL' is available (ollama pull)..." >&2
+    if ! "$ollama_bin" pull "$LAUNCH_MODEL" >/tmp/gac-ollama-pull.log 2>&1; then
+      echo "gac: ollama pull '$LAUNCH_MODEL' failed; see /tmp/gac-ollama-pull.log" >&2
+    fi
+  fi
 fi
 
 # Pass the oracle endpoint + key to the container env. `guix shell --container`
