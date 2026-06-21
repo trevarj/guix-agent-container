@@ -283,17 +283,25 @@ share_rw "$HOME_RO/.claude" \
   session-env sessions shell-snapshots tasks \
   .last-cleanup daemon.lock daemon.log daemon.status.json history.jsonl stats-cache.json
 
-# ~/.codex: RO via $HOME expose (config.toml, auth.json, AGENTS.md, agents, bin,
-# rules, .git go RO); share only state RW.
-share_rw "$HOME_RO/.codex" \
-  .agents .codex .tmp attachments cache generated_images log memories plugins \
-  sessions shell_snapshots skills tmp \
-  .personality_migration history.jsonl installation_id models_cache.json \
-  session_index.jsonl version.json \
-  goals_1.sqlite goals_1.sqlite-shm goals_1.sqlite-wal \
-  logs_2.sqlite logs_2.sqlite-shm logs_2.sqlite-wal \
-  memories_1.sqlite \
-  state_5.sqlite state_5.sqlite-shm state_5.sqlite-wal
+# ~/.codex: codex keeps its sqlite state at the TOP LEVEL of ~/.codex
+# (state_5.sqlite, goals_1.sqlite, logs_2.sqlite, memories_1.sqlite + their
+# -shm/-wal). SQLite needs the containing DIRECTORY writable to (re)create
+# -shm/-wal files and rollback journals; per-file RW shares leave the dir RO
+# (via the $HOME expose) and codex fails at TUI startup with SQLITE_READONLY
+# (code 8) — `codex exec` dodges it, the interactive TUI doesn't. Share the
+# whole dir RW, then pin the genuine agent config back RO on top so it stays
+# tamper-proof: the same set the per-file design left RO (config.toml,
+# auth.json, agents, bin, rules, .git). skills stays RW as before (runtime
+# installs there); the dotfiles-managed config dirs stay RO-pinned. Making the
+# dir RW also fixes the latent gap where memories_1.sqlite-shm/-wal were never
+# shared. The RO binds are mount points, so the agent can't unlink/rename them
+# (EBUSY) — config stays put.
+if [ -d "$HOME_RO/.codex" ]; then
+  args+=(--share="$HOME_RO/.codex")
+  for p in config.toml auth.json agents bin rules .git; do
+    if [ -e "$HOME_RO/.codex/$p" ]; then args+=(--expose="$HOME_RO/.codex/$p=$HOME_RO/.codex/$p"); fi
+  done
+fi
 
 # Oracle socket (the only signing path) + start in the writable area.
 args+=(--share="$SIGN_SOCK" --cwd="$WORKSPACE_RW")
@@ -342,4 +350,18 @@ exec "$@"
 EOSH
 )
 
-guix shell "${args[@]}" -- bash -c "$entrypoint" _ "$@"
+# Codex's TUI prompts to "trust" its cwd and persists that to config.toml. The
+# container pins config.toml RO (tamper-proof agent config), so the persist
+# fails with "Failed to set trust ... config/batchWrite failed in TUI" and
+# blocks startup. Pass an in-memory `-c` override trusting the workspace cwd
+# (gac always starts codex there via --cwd) so codex reads it as already
+# trusted and never tries to write. config.toml stays RO; the override is
+# session-only. User-supplied codex args follow unchanged (a user `-c` for the
+# same key would win, since later overrides take precedence). Only injected
+# for the bare `codex` subcommand, so `gac bash`/`gac claude` are unaffected.
+pass_args=("$@")
+if [ "${1:-}" = "codex" ]; then
+  pass_args=(codex -c "projects.\"$WORKSPACE_RW\".trust_level=\"trusted\"" "${@:2}")
+fi
+
+guix shell "${args[@]}" -- bash -c "$entrypoint" _ "${pass_args[@]}"
