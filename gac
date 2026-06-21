@@ -44,6 +44,23 @@ else
   exit 1
 fi
 
+# --- Validate the subcommand --------------------------------------------------
+# gac's CLI is exactly: claude | codex | bash [args...]. The first arg is the
+# command exec'd inside the container — anything else (e.g. `ollama launch ...`)
+# would be run in the container and fail confusingly against the RO-masked
+# ~/.ollama. ollama is auto-managed on the host (see below), never a subcommand.
+case "${1:-}" in
+  claude|codex|bash) : ;;
+  "")        echo "Usage: gac claude | codex | bash [args...]" >&2; exit 1 ;;
+  -h|--help) echo "Usage: gac claude | codex | bash [args...]"; exit 0 ;;
+  *)
+    echo "gac: unknown subcommand '$1'" >&2
+    echo "Usage: gac claude | codex | bash [args...]" >&2
+    echo "  (ollama is auto-managed on the host at 127.0.0.1:11434; not a subcommand)" >&2
+    exit 2
+    ;;
+esac
+
 HOME_RO="${HOME:?}"
 WORKSPACE_RW="$HOME_RO/Workspace"
 SIGN_KEY="${GAC_SIGN_KEY:-A52D68794EBED758}"
@@ -98,23 +115,44 @@ for _ in $(seq 1 100); do [ -S "$SIGN_SOCK" ] && break; sleep 0.1; done
 # second server inside the container would clash on :11434 and can't use the
 # host's masked ~/.ollama. Adopt a pre-existing server; only kill one we start.
 OLLAMA_PID=""
-probe_ollama() { (exec 3<>/dev/tcp/127.0.0.1/11434) >/dev/null 2>&1; }
+# True when an ollama HTTP API is actually serving — not just a listening socket
+# (a bare TCP accept happens before the HTTP layer is ready, and any process can
+# hold :11434). GET /api/version and look for the JSON version field.
+probe_ollama() {
+  local resp
+  resp="$(
+    exec 3<>/dev/tcp/127.0.0.1/11434 2>/dev/null || exit 1
+    printf 'GET /api/version HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3
+    cat <&3
+    exec 3>&-
+  )" 2>/dev/null
+  [[ $resp == *'"version"'* ]]
+}
+
+# Adopt a pre-existing server; only start (and later kill) one we own. Retry the
+# probe briefly before starting our own so we don't race a host autostart that's
+# mid-bind — a second `ollama serve` would lose :11434 ("address already in use")
+# and the post-start probe would then see the foreign server, not ours.
+if ! probe_ollama; then
+  for _ in $(seq 1 5); do probe_ollama && break; sleep 0.2; done
+fi
 if ! probe_ollama; then
   if ollama_bin="$(command -v ollama 2>/dev/null)"; then
     "$ollama_bin" serve >/tmp/gac-ollama.log 2>&1 &
     OLLAMA_PID=$!
     for _ in $(seq 1 50); do probe_ollama && break; sleep 0.2; done
-    if ! probe_ollama; then
-      echo "gac: ollama serve did not come up; see /tmp/gac-ollama.log" >&2
-      OLLAMA_PID=""
-    fi
   else
     echo "gac: ollama not on PATH and nothing serving on :11434; ollama calls will fail" >&2
   fi
 fi
+if ! probe_ollama; then
+  echo "gac: ollama serve did not come up; see /tmp/gac-ollama.log" >&2
+  OLLAMA_PID=""
+fi
 
-# Pass the oracle endpoint + key to the container env (guix shell preserves env
-# without --pure, so the shim picks these up).
+# Pass the oracle endpoint + key to the container env. `guix shell --container`
+# starts from a clean environment, so anything the container must see has to be
+# explicitly --preserve'd below (the shims read GAC_SIGN_SOCK/GAC_SIGN_KEY).
 export GAC_SIGN_SOCK="$SIGN_SOCK" GAC_SIGN_KEY="$SIGN_KEY"
 
 # --- Build the mount table ----------------------------------------------------
@@ -122,6 +160,9 @@ args=(
   --container --network --nesting
   --preserve=GAC_SIGN_SOCK --preserve=GAC_SIGN_KEY     # oracle endpoint -> container env
   --preserve=TERM --preserve=COLORTERM --preserve=TERM_PROGRAM  # carry host terminal (color + TUI)
+  --preserve=^ANTHROPIC_                               # base URL + auth token -> host ollama proxy
+  --preserve=CLAUDE_CODE_SUBAGENT_MODEL                # subagents use the same routed model
+  --preserve=OLLAMA_HOST                               # respect a host-customized endpoint (else defaults)
   --manifest="$SBX/manifest.scm"
   --expose="$HOME_RO"                                  # $HOME RO (base)
   --expose="$STAGE=/opt/gac"                           # RO shim sources (gpg-shim, guix-filter)
